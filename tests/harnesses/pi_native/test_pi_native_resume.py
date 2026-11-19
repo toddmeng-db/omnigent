@@ -968,16 +968,38 @@ def _items_handler(items: list[dict[str, Any]]):
 
 
 @pytest.mark.asyncio
-async def test_ensure_local_pi_resume_session_writes_history(tmp_path: Path) -> None:
+@pytest.mark.parametrize("with_file", [False, True])
+async def test_ensure_local_pi_resume_session_writes_history(
+    tmp_path: Path, with_file: bool
+) -> None:
+    session_dir = tmp_path / "pi-sessions"
+    session_dir.mkdir()
     items = [_user_item("remember BANANA42"), _assistant_item("ok BANANA42")]
+    if with_file:
+        items[0]["content"].append({"type": "input_file", "file_id": "video-file"})
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/items"):
+            return _items_handler(items)(request)
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, content=b"synthetic video")
+        return httpx.Response(
+            200,
+            json={
+                "name": "clip.mp4",
+                "content_type": "video/mp4",
+                "metadata": {"source_metadata": {"delivery": "filesystem"}},
+            },
+        )
+
     async with httpx.AsyncClient(
-        base_url="http://server", transport=httpx.MockTransport(_items_handler(items))
+        base_url="http://server", transport=httpx.MockTransport(handle)
     ) as client:
         path = await ensure_local_pi_resume_session(
             client,
             session_id="conv_abc",
             external_session_id=_EXTERNAL_ID,
-            session_dir=tmp_path,
+            session_dir=session_dir,
             workspace=Path("/repo"),
             model="claude-opus-4-8",
         )
@@ -993,6 +1015,12 @@ async def test_ensure_local_pi_resume_session_writes_history(tmp_path: Path) -> 
     ]
     assert "remember BANANA42" in texts
     assert "ok BANANA42" in texts
+    if with_file:
+        from omnigent.inner.native_attachments import attachment_cache_dir
+
+        attached = attachment_cache_dir(tmp_path) / "clip.mp4"
+        assert attached.read_bytes() == b"synthetic video"
+        assert f"[Attached: {attached}]" in texts
 
 
 @pytest.mark.asyncio

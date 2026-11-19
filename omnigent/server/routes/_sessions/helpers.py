@@ -12594,8 +12594,8 @@ async def _require_filesystem_attachment_harness(conv: Conversation, filename: s
         raise HTTPException(
             status_code=415,
             detail=(
-                f"'{filename}' can only be attached to a Claude Code or Codex "
-                "session, which can open this file type."
+                f"'{filename}' requires a native coding-agent session that supports "
+                "local file attachments. This harness cannot open this file type."
             ),
         )
 

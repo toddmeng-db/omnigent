@@ -832,6 +832,11 @@ async def ensure_local_pi_resume_session(
     if existing is not None:
         return existing
     items = await fetch_all_session_items_for_pi_resume(client, session_id)
+    from omnigent.inner.native_attachments import resolve_session_item_file_references
+
+    items = await resolve_session_item_file_references(
+        client, session_id=session_id, items=items, bridge_dir=session_dir.parent
+    )
     records = pi_session_records_from_session_items(
         items,
         session_id=session_id,

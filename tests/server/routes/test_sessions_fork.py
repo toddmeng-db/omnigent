@@ -3091,8 +3091,16 @@ def _attachment_fork_client(
     [
         ("openai-agents", 400),
         ("claude-sdk", 400),
-        ("pi-native", 400),
-        ("cursor-native", 400),
+        ("pi-native", 201),
+        ("cursor-native", 201),
+        ("kiro-native", 400),
+        ("goose-native", 400),
+        ("antigravity-native", 400),
+        ("qwen-native", 201),
+        ("kimi-native", 400),
+        ("hermes-native", 400),
+        ("devin-native", 201),
+        ("opencode-native", 400),
         ("claude-native", 201),
         ("codex-native", 201),
     ],
@@ -3112,7 +3120,7 @@ def test_fork_checks_attachment_history_before_creating_session(
     assert response.status_code == expected_status, response.text
     if expected_status == 400:
         assert filename in response.json()["error"]["message"]
-        assert "Claude Code or Codex" in response.json()["error"]["message"]
+        assert "local file attachments" in response.json()["error"]["message"]
         assert not conv_store.fork_calls
         assert len(file_store.files) == 1
     else:

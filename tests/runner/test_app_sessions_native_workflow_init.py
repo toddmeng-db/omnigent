@@ -21,6 +21,7 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harnesses.codex_native.bridge import CODEX_NATIVE_BRIDGE_ID_LABEL_KEY
 from omnigent.inference_config import ModelNotAllowedError
 from omnigent.inner.databricks_executor import DatabricksAuthError
+from omnigent.inner.native_attachments import attachment_cache_dir
 from omnigent.native import native_dispatch
 from omnigent.runner import create_runner_app
 from omnigent.runner import tool_dispatch as _tool_dispatch
@@ -53,6 +54,79 @@ from tests.runner.conftest import (
     _sse,
 )
 from tests.runner.helpers import NullServerClient
+
+
+@pytest.mark.parametrize("key", ["pi", "antigravity"])
+@pytest.mark.parametrize("history_status", [200, 503])
+async def test_spawn_env_restores_native_attachment_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    key: str,
+    history_status: int,
+) -> None:
+    """Warm launches recover deleted binary caches for bare and label-backed bridges."""
+    monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path))
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/items"):
+            return httpx.Response(
+                history_status,
+                json={
+                    "data": [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_file", "file_id": "video-file"},
+                                {"type": "input_image", "file_id": "inline-image"},
+                            ],
+                        },
+                    ],
+                    "has_more": False,
+                },
+            )
+        if request.url.path.endswith("/inline-image"):
+            return httpx.Response(200, json={"name": "preview.png", "content_type": "image/png"})
+        assert not request.url.path.endswith("/inline-image/content")
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, content=b"synthetic video")
+        return httpx.Response(
+            200,
+            json={
+                "name": "clip.mp4",
+                "content_type": "video/mp4",
+                "metadata": {"source_metadata": {"delivery": "filesystem"}},
+            },
+        )
+
+    async with httpx.AsyncClient(
+        base_url="https://example.test", transport=httpx.MockTransport(handle)
+    ) as client:
+        env = await _resolve_native_spawn_env(
+            f"{key}-native",
+            "session-example",
+            server_client=client,
+            optional_labels={"omnigent.antigravity_native.bridge_id": "bridge-example"},
+        )
+        assert env is not None
+        path = (
+            attachment_cache_dir(Path(env[f"HARNESS_{key.upper()}_NATIVE_BRIDGE_DIR"]))
+            / "clip.mp4"
+        )
+        if history_status != 200:
+            assert not path.exists()
+            assert "Could not restore attachment cache" in caplog.text
+            return
+        assert path.read_bytes() == b"synthetic video"
+        path.unlink()
+        await _resolve_native_spawn_env(
+            f"{key}-native",
+            "session-example",
+            server_client=client,
+            optional_labels={"omnigent.antigravity_native.bridge_id": "bridge-example"},
+        )
+        assert path.read_bytes() == b"synthetic video"
 
 
 @pytest.mark.asyncio

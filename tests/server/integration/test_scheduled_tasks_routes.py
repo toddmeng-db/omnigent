@@ -4349,11 +4349,11 @@ async def test_the_copy_carries_history_for_its_own_agent_not_the_tasks(
     assert copy.labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1"
 
 
+@pytest.mark.parametrize("agent_name,status", [("pi-native-ui", 200), ("opencode-native-ui", 400)])
 async def test_runs_need_an_agent_that_can_open_the_sessions_file_attachments(
-    auth_client: httpx.AsyncClient, db_uri: str
+    auth_client: httpx.AsyncClient, db_uri: str, agent_name: str, status: int
 ) -> None:
     from omnigent.entities import MessageData, NewConversationItem
-    from omnigent.native.native_coding_agents import PI_NATIVE_AGENT_NAME
 
     source_id = _owned_session(db_uri)
     stored = SqlAlchemyFileStore(db_uri).create(
@@ -4384,26 +4384,29 @@ async def test_runs_need_an_agent_that_can_open_the_sessions_file_attachments(
             ),
         ],
     )
-    pi = builtin_agent_id(PI_NATIVE_AGENT_NAME)
+    target = builtin_agent_id(agent_name)
 
-    # Pi can't open the zip the copied history refers to, as with a fork.
-    rejected = await auth_client.post(
+    selected = await auth_client.post(
         "/v1/scheduled-tasks",
-        json=_create_body(source_session_id=source_id, agent_id=pi),
+        json=_create_body(source_session_id=source_id, agent_id=target),
         headers=_headers(),
     )
-    assert rejected.status_code == 400, rejected.text
-    assert "sample.zip" in rejected.json()["error"]["message"]
+    assert selected.status_code == status, selected.text
+    if status == 400:
+        assert "sample.zip" in selected.json()["error"]["message"]
 
     created = await auth_client.post(
         "/v1/scheduled-tasks", json=_create_body(source_session_id=source_id), headers=_headers()
     )
     assert created.status_code == 200, created.text
     switched = await auth_client.patch(
-        f"/v1/scheduled-tasks/{created.json()['id']}", json={"agent_id": pi}, headers=_headers()
+        f"/v1/scheduled-tasks/{created.json()['id']}",
+        json={"agent_id": target},
+        headers=_headers(),
     )
-    assert switched.status_code == 400, switched.text
-    assert "sample.zip" in switched.json()["error"]["message"]
+    assert switched.status_code == status, switched.text
+    if status == 400:
+        assert "sample.zip" in switched.json()["error"]["message"]
 
 
 @pytest.mark.parametrize("source_drops_its_file", [False, True])

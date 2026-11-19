@@ -366,7 +366,8 @@ def _require_attachment_compatible_history(
     :returns: A retained filesystem attachment's name, or ``None``.
     :raises OmnigentError: If the target cannot open a referenced attachment.
     """
-    from omnigent.inner.native_attachments import FILESYSTEM_ATTACHMENT_HARNESSES
+    from omnigent.harness_aliases import canonicalize_harness
+    from omnigent.inner.native_attachments import FILESYSTEM_ATTACHMENT_REPLAY_HARNESSES
 
     filename = _filesystem_attachment_in_history(
         session_id,
@@ -379,10 +380,13 @@ def _require_attachment_compatible_history(
         if target_harness is None:
             native = _native_coding_agent_for_agent(target_agent)
             target_harness = native.harness if native is not None else None
-        if target_harness not in FILESYSTEM_ATTACHMENT_HARNESSES:
+        target_harness = canonicalize_harness(target_harness)
+        if target_harness not in FILESYSTEM_ATTACHMENT_REPLAY_HARNESSES:
             raise OmnigentError(
                 f"This history includes '{filename}', which requires "
-                "Claude Code or Codex. Choose one of those harnesses, "
+                "a native coding-agent harness supporting local file attachments "
+                "and history replay. "
+                "Choose a supported harness, "
                 "or fork from before the attachment was sent.",
                 code=ErrorCode.INVALID_INPUT,
             )

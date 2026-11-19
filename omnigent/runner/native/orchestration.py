@@ -3479,6 +3479,11 @@ async def _auto_create_cursor_terminal(
             fork_items = await _fetch_all_session_items_for_claude_resume(
                 server_client, session_id
             )
+            from omnigent.inner.native_attachments import resolve_session_item_file_references
+
+            fork_items = await resolve_session_item_file_references(
+                server_client, session_id=session_id, items=fork_items, bridge_dir=bridge_dir
+            )
             write_fork_preamble(bridge_dir, _cursor_fork_history_preamble(fork_items))
         except Exception:  # context carry-over is best-effort
             _logger.warning(
@@ -4341,6 +4346,11 @@ async def _auto_create_devin_terminal(
             carried_items = await _fetch_all_session_items_for_claude_resume(
                 server_client, session_id
             )
+            from omnigent.inner.native_attachments import resolve_session_item_file_references
+
+            carried_items = await resolve_session_item_file_references(
+                server_client, session_id=session_id, items=carried_items, bridge_dir=bridge_dir
+            )
             if launch_config.fork_carry_history or _devin_has_replayable_history(carried_items):
                 write_fork_preamble(bridge_dir, _cursor_fork_history_preamble(carried_items))
         except Exception:  # context carry-over is best-effort
@@ -4551,6 +4561,15 @@ async def _build_qwen_fork_recording(
         return qwen_session_id
     try:
         items = await fetch_all_session_items_for_pi_resume(server_client, session_id)
+        from omnigent.harnesses.qwen_native.bridge import bridge_dir_for_session_id
+        from omnigent.inner.native_attachments import resolve_session_item_file_references
+
+        items = await resolve_session_item_file_references(
+            server_client,
+            session_id=session_id,
+            items=items,
+            bridge_dir=bridge_dir_for_session_id(session_id),
+        )
         records = qwen_session_records_from_session_items(
             items,
             qwen_session_id=qwen_session_id,
@@ -10650,8 +10669,6 @@ async def _resolve_native_spawn_env(
                 bridge_dir_for_session_id(session_id), server_url, session_id
             )
         )
-        return _typed_spawn_env(builder(session_id))
-
     if provider.bridge_id_label_key is not None:
         labels = (
             optional_labels
@@ -10670,9 +10687,39 @@ async def _resolve_native_spawn_env(
             # When the label is unavailable, keep the executor on the directory
             # this runner launched into.
             env[CODEX_NATIVE_BRIDGE_DIR_ENV_VAR] = str(codex_native_bridge_dir(session_id))
-        return env
+    else:
+        env = _typed_spawn_env(builder(session_id))
 
-    return _typed_spawn_env(builder(session_id))
+    from omnigent.inner.native_attachments import (
+        FILESYSTEM_ATTACHMENT_HARNESSES,
+        resolve_session_item_file_references,
+    )
+
+    bridge_path = env.get(f"HARNESS_{agent.key.upper()}_NATIVE_BRIDGE_DIR")
+    if (
+        agent.harness in FILESYSTEM_ATTACHMENT_HARNESSES
+        and agent.key not in {"claude", "codex"}
+        and bridge_path is not None
+    ):
+        from omnigent.harnesses.pi_native.resume import fetch_all_session_items_for_pi_resume
+
+        try:
+            items = await fetch_all_session_items_for_pi_resume(server_client, session_id)
+            await resolve_session_item_file_references(
+                server_client,
+                session_id=session_id,
+                items=items,
+                bridge_dir=Path(bridge_path),
+                filesystem_only=True,
+            )
+        except (RuntimeError, httpx.HTTPError):
+            _logger.warning(
+                "Could not restore attachment cache for %s session %s",
+                agent.harness,
+                session_id,
+                exc_info=True,
+            )
+    return env
 
 
 @dataclasses.dataclass(frozen=True)

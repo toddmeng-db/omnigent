@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 from collections import Counter
+from pathlib import Path
 
 import httpx
 import pytest
@@ -14,7 +15,8 @@ from omnigent.inner import native_attachments
 
 
 @pytest.mark.asyncio
-async def test_resolve_compaction_snapshot_attachments() -> None:
+@pytest.mark.parametrize("text_history", [False, True])
+async def test_resolve_compaction_snapshot_attachments(tmp_path: Path, text_history: bool) -> None:
     """Rebuilt snapshots read attachments and retain references whose reads fail."""
     paths: list[str] = []
 
@@ -24,7 +26,14 @@ async def test_resolve_compaction_snapshot_attachments() -> None:
             return httpx.Response(404)
         if request.url.path.endswith("/content"):
             return httpx.Response(200, content=b"synthetic attachment")
-        return httpx.Response(200, json={"content_type": "text/plain", "name": "notes.txt"})
+        return httpx.Response(
+            200,
+            json={
+                "content_type": "application/zip",
+                "name": "bundle.zip",
+                "metadata": {"source_metadata": {"delivery": "filesystem"}},
+            },
+        )
 
     blocks = [
         {"type": "input_file", "file_id": "fork-file"},
@@ -37,7 +46,10 @@ async def test_resolve_compaction_snapshot_attachments() -> None:
         transport=httpx.MockTransport(handle), base_url="https://example.test"
     ) as client:
         result = await native_attachments.resolve_session_item_file_references(
-            client, session_id="fork-session", items=items
+            client,
+            session_id="fork-session",
+            items=items,
+            bridge_dir=tmp_path if text_history else None,
         )
 
     assert result is items
@@ -47,8 +59,17 @@ async def test_resolve_compaction_snapshot_attachments() -> None:
         "/v1/sessions/fork-session/resources/files/missing-file",
     ]
     resolved = snapshot["content"]
+    if text_history:
+        path = native_attachments.attachment_cache_dir(tmp_path) / "bundle.zip"
+        assert path.read_bytes() == b"synthetic attachment"
+        assert resolved == [
+            {"type": "input_text", "text": f"[Attached: {path}]"},
+            {"type": "input_text", "text": "[Attachment missing-file could not be loaded]"},
+            blocks[2],
+        ]
+        return
     assert base64.b64decode(resolved[0]["file_data"].split(",", 1)[1]) == b"synthetic attachment"
-    assert resolved[0]["filename"] == "notes.txt"
+    assert resolved[0]["filename"] == "bundle.zip"
     assert "file_id" not in resolved[0]
     assert resolved[1:] == blocks[1:]
 

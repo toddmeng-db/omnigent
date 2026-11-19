@@ -107,8 +107,27 @@ DEFAULT_FILESYSTEM_ATTACHMENT_EXTENSIONS: frozenset[str] = frozenset(
     {".zip", ".docx", ".xlsx", ".pptx", ".db", ".sqlite", ".sqlite3"}
 )
 
-# Harnesses supporting uploads and history restoration for these file formats.
-FILESYSTEM_ATTACHMENT_HARNESSES: frozenset[str] = frozenset({"claude-native", "codex-native"})
+# These adapters materialize attachments as local files.
+FILESYSTEM_ATTACHMENT_HARNESSES: frozenset[str] = frozenset(
+    {
+        "claude-native",
+        "codex-native",
+        "pi-native",
+        "cursor-native",
+        "kiro-native",
+        "goose-native",
+        "antigravity-native",
+        "qwen-native",
+        "kimi-native",
+        "hermes-native",
+        "devin-native",
+    }
+)
+
+# These rebuild destination-cache paths when replaying copied file history.
+FILESYSTEM_ATTACHMENT_REPLAY_HARNESSES: frozenset[str] = frozenset(
+    {"claude-native", "codex-native", "pi-native", "cursor-native", "qwen-native", "devin-native"}
+)
 
 # Advertised by builds that can deliver and restore these attachments.
 CAP_FILESYSTEM_ATTACHMENTS = "filesystem_attachments"
@@ -700,6 +719,7 @@ async def resolve_file_id_block(
     *,
     session_id: str,
     client: httpx.AsyncClient,
+    filesystem_only: bool = False,
 ) -> tuple[dict[str, object], dict[str, int] | None] | None:
     """
     Fetch a ``file_id`` attachment's bytes and inline them as a data URI.
@@ -714,9 +734,12 @@ async def resolve_file_id_block(
         is true.
     :param session_id: Omnigent conversation id, e.g. ``"conv_abc123"``.
     :param client: HTTP client pointed at the Omnigent server.
+    :param filesystem_only: Skip inline attachments after reading their metadata,
+        without downloading their content.
     :returns: ``(rebuilt_block, notice)`` — the block without ``file_id``,
         and source dimensions for a sibling framework block, or ``None``.
-        Returns ``None`` (not a tuple) when the fetch failed, so callers
+        Returns ``None`` (not a tuple) when the fetch failed or an inline file
+        was skipped by ``filesystem_only``. When a fetch fails, callers
         keep the original block and a visible marker can surface downstream.
     """
     file_id = str(block.get("file_id"))
@@ -730,6 +753,22 @@ async def resolve_file_id_block(
             meta_resp = await _read_attachment_resource(
                 client, base, session_id=session_id, stage=stage, timeout_s=10.0
             )
+            try:
+                parsed = meta_resp.json() if meta_resp.content else {}
+            except ValueError:
+                parsed = None
+            meta = parsed if isinstance(parsed, dict) else {}
+            stored_name = meta.get("name")
+            resource_metadata = meta.get("metadata")
+            source_metadata = (
+                resource_metadata.get("source_metadata")
+                if isinstance(resource_metadata, Mapping)
+                else None
+            )
+            if filesystem_only and not uses_filesystem_delivery(
+                stored_name if isinstance(stored_name, str) else None, source_metadata
+            ):
+                return None
             stage = "content"
             content_resp = await _read_attachment_resource(
                 client, f"{base}/content", session_id=session_id, stage=stage, timeout_s=30.0
@@ -751,11 +790,6 @@ async def resolve_file_id_block(
         )
         return None
 
-    try:
-        parsed = meta_resp.json() if meta_resp.content else {}
-    except ValueError:
-        parsed = None
-    meta = parsed if isinstance(parsed, dict) else {}
     if meta_resp.content and not meta:
         # Unusable metadata only costs the media-type hint; the content
         # response's Content-Type header still provides it.
@@ -772,17 +806,10 @@ async def resolve_file_id_block(
     content_type = content_type.split(";", 1)[0]
     encoded = base64.b64encode(content_resp.content).decode("ascii")
     new_block = {k: v for k, v in block.items() if k not in ("file_id", DELIVERY_KEY)}
-    stored_name = meta.get("name")
     if isinstance(stored_name, str) and stored_name:
         # The stored name decides delivery. The block's own filename comes from
         # the client and could steer an upload past the upload checks.
         new_block["filename"] = stored_name
-    resource_metadata = meta.get("metadata")
-    source_metadata = (
-        resource_metadata.get("source_metadata")
-        if isinstance(resource_metadata, Mapping)
-        else None
-    )
     delivery = source_metadata.get(DELIVERY_KEY) if isinstance(source_metadata, Mapping) else None
     if delivery in (FILESYSTEM_DELIVERY, INLINE_DELIVERY):
         new_block[DELIVERY_KEY] = delivery
@@ -800,9 +827,11 @@ async def resolve_session_item_file_references(
     *,
     session_id: str,
     items: list[dict[str, Any]],
+    bridge_dir: Path | None = None,
+    filesystem_only: bool = False,
 ) -> list[dict[str, Any]]:
     """
-    Inline ``file_id`` attachment blocks in rebuilt history as base64 data URIs.
+    Resolve ``file_id`` attachment blocks when rebuilding native history.
 
     Message items come back from the server with the upload's raw ``file_id``.
     A cold-resume rebuild runs where no file/artifact stores exist, so bytes are
@@ -812,8 +841,11 @@ async def resolve_session_item_file_references(
     :param client: HTTP client pointed at the Omnigent server.
     :param session_id: Omnigent conversation id, e.g. ``"conv_abc123"``.
     :param items: Flat API item dicts from ``GET /v1/sessions/{id}/items``.
-    :returns: The same items with resolvable attachment blocks rewritten
-        to carry ``image_url`` / ``file_data`` data URIs.
+    :param bridge_dir: Materialize filesystem files and replace their blocks with
+        text references for harnesses that rebuild text-only history.
+    :param filesystem_only: Restore only filesystem files; leave inline media unread.
+    :returns: The same items with resolved data URIs, or local file references
+        when *bridge_dir* is supplied.
     """
     messages: list[dict[str, Any]] = []
     for item in items:
@@ -832,7 +864,9 @@ async def resolve_session_item_file_references(
             if not (isinstance(block, dict) and has_unresolved_file_id(block)):
                 resolved_content.append(block)
                 continue
-            result = await resolve_file_id_block(block, session_id=session_id, client=client)
+            result = await resolve_file_id_block(
+                block, session_id=session_id, client=client, filesystem_only=filesystem_only
+            )
             if result is None:
                 resolved_content.append(block)
                 continue
@@ -840,5 +874,22 @@ async def resolve_session_item_file_references(
             resolved_content.append(new_block)
             if notice is not None:
                 resolved_content.append(framework_notice_block(notice))
+        if bridge_dir is not None:
+            for index, block in enumerate(resolved_content):
+                if not isinstance(block, dict) or block.get("type") not in (
+                    "input_image",
+                    "input_file",
+                ):
+                    continue
+                if filesystem_only and has_unresolved_file_id(block):
+                    continue
+                filename = block.get("filename")
+                if uses_filesystem_delivery(
+                    filename if isinstance(filename, str) else None, block
+                ) or (has_unresolved_file_id(block) and not filesystem_only):
+                    resolved_content[index] = {
+                        "type": "input_text",
+                        "text": attachment_reference_line(block, bridge_dir),
+                    }
         item["content"] = resolved_content
     return items
