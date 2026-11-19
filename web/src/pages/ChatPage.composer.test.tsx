@@ -8053,7 +8053,7 @@ describe("Composer file-attachment focus", () => {
     ta.blur();
     expect(document.activeElement).not.toBe(ta);
 
-    const bad = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    const bad = new File([new Uint8Array(10)], "clip.webm", { type: "video/webm" });
     fireEvent.change(fileInput(), { target: { files: [bad] } });
 
     expect(document.activeElement).not.toBe(ta);
@@ -8108,7 +8108,7 @@ describe("Composer file-attachment focus", () => {
     // nothing else clears the notice. Left sticky it reads as a blocker on a
     // composer that can actually be submitted.
     render(<Composer {...composerProps()} />);
-    const bad = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    const bad = new File([new Uint8Array(10)], "clip.webm", { type: "video/webm" });
     fireEvent.change(fileInput(), { target: { files: [bad] } });
     expect(screen.getByText(/can't be attached/)).toBeTruthy();
 
@@ -8123,7 +8123,7 @@ describe("Composer file-attachment focus", () => {
     // composer's mixed-drop behavior).
     render(<Composer {...composerProps()} />);
     const ok = new File(["hello"], "notes.txt", { type: "text/plain" });
-    const bad = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    const bad = new File([new Uint8Array(10)], "clip.webm", { type: "video/webm" });
     fireEvent.change(fileInput(), { target: { files: [ok, bad] } });
     expect(screen.getByText("notes.txt")).toBeTruthy();
     expect(screen.getByText(/can't be attached/)).toBeTruthy();
@@ -8236,7 +8236,7 @@ describe("Composer failed-send attachment restore", () => {
   it("restores the retriable files and flags the ones current limits reject", () => {
     render(<Composer {...composerProps()} />);
     const ok = new File(["hello"], "notes.txt", { type: "text/plain" });
-    const bad = new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" });
+    const bad = new File([new Uint8Array(10)], "clip.webm", { type: "video/webm" });
     act(() =>
       useChatStore.setState({
         failedSendDraft: { conversationId: "conv_test", text: "", files: [ok, bad] },
@@ -8244,7 +8244,7 @@ describe("Composer failed-send attachment restore", () => {
     );
 
     expect(screen.getByText("notes.txt")).toBeTruthy();
-    expect(screen.queryByText("clip.mp4")).toBeNull();
+    expect(screen.queryByText("clip.webm")).toBeNull();
     expect(screen.getByText(/can't be attached/)).toBeTruthy();
     // The store entry drained on restore, so the draft can't come back twice.
     expect(useChatStore.getState().failedSendDraft).toBeNull();
@@ -8282,7 +8282,7 @@ describe("Composer failed-send attachment restore", () => {
         failedSendDraft: {
           conversationId: "conv_test",
           text: "",
-          files: [new File([new Uint8Array(10)], "clip.mp4", { type: "video/mp4" })],
+          files: [new File([new Uint8Array(10)], "clip.webm", { type: "video/webm" })],
         },
       }),
     );
