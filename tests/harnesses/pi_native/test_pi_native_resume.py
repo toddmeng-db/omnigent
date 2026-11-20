@@ -977,10 +977,14 @@ async def test_ensure_local_pi_resume_session_writes_history(
     items = [_user_item("remember BANANA42"), _assistant_item("ok BANANA42")]
     if with_file:
         items[0]["content"].append({"type": "input_file", "file_id": "video-file"})
+        items[0]["content"].append({"type": "input_image", "file_id": "inline-image"})
 
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/items"):
             return _items_handler(items)(request)
+        if request.url.path.endswith("/inline-image"):
+            return httpx.Response(200, json={"name": "preview.png", "content_type": "image/png"})
+        assert not request.url.path.endswith("/inline-image/content")
         if request.url.path.endswith("/content"):
             return httpx.Response(200, content=b"synthetic video")
         return httpx.Response(

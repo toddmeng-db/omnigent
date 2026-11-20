@@ -8,6 +8,7 @@ import dataclasses
 import json
 import logging
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -67,8 +68,10 @@ async def test_spawn_env_restores_native_attachment_cache(
 ) -> None:
     """Warm launches recover deleted binary caches for bare and label-backed bridges."""
     monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path))
+    calls: Counter[str] = Counter()
 
     def handle(request: httpx.Request) -> httpx.Response:
+        calls[request.url.path] += 1
         if request.url.path.endswith("/items"):
             return httpx.Response(
                 history_status,
@@ -119,6 +122,13 @@ async def test_spawn_env_restores_native_attachment_cache(
             assert "Could not restore attachment cache" in caplog.text
             return
         assert path.read_bytes() == b"synthetic video"
+        await _resolve_native_spawn_env(
+            f"{key}-native",
+            "session-example",
+            server_client=client,
+            optional_labels={"omnigent.antigravity_native.bridge_id": "bridge-example"},
+        )
+        assert calls["/v1/sessions/session-example/resources/files/video-file/content"] == 1
         path.unlink()
         await _resolve_native_spawn_env(
             f"{key}-native",
@@ -127,6 +137,7 @@ async def test_spawn_env_restores_native_attachment_cache(
             optional_labels={"omnigent.antigravity_native.bridge_id": "bridge-example"},
         )
         assert path.read_bytes() == b"synthetic video"
+        assert calls["/v1/sessions/session-example/resources/files/video-file/content"] == 2
 
 
 @pytest.mark.asyncio

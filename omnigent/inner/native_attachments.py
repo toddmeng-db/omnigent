@@ -41,6 +41,31 @@ _logger = logging.getLogger(__name__)
 _ATTACHMENT_READ_ATTEMPTS = 3
 _ATTACHMENT_RESOLVE_TIMEOUT_S = 60.0
 _ATTACHMENT_RETRY_STATUSES = frozenset({408, 500, 502, 503, 504})
+_FILESYSTEM_REFERENCE_CACHE: dict[tuple[Path, str, str], tuple[Path, bytes]] = {}
+
+
+def _cached_filesystem_reference(key: tuple[Path, str, str]) -> str | None:
+    """Reuse verified original bytes previously fetched for this session and file id."""
+    cached = _FILESYSTEM_REFERENCE_CACHE.get(key)
+    if cached is None:
+        return None
+    path, digest = cached
+    try:
+        if not path.parent.is_symlink() and not path.parent.parent.is_symlink():
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as content:
+                mode = os.fstat(content.fileno()).st_mode
+                if (
+                    stat.S_ISREG(mode)
+                    and not mode & 0o111
+                    and hashlib.file_digest(content, "sha256").digest() == digest
+                ):
+                    return f"[Attached: {path}]"
+    except OSError:
+        pass
+    _FILESYSTEM_REFERENCE_CACHE.pop(key, None)
+    return None
+
 
 # Characters that would corrupt a "[Attached: ...]" / "[Attachment ...]"
 # marker line for the consumers that regex-match it (forwarders, title
@@ -720,6 +745,7 @@ async def resolve_file_id_block(
     session_id: str,
     client: httpx.AsyncClient,
     filesystem_only: bool = False,
+    bridge_dir: Path | None = None,
 ) -> tuple[dict[str, object], dict[str, int] | None] | None:
     """
     Fetch a ``file_id`` attachment's bytes and inline them as a data URI.
@@ -736,13 +762,20 @@ async def resolve_file_id_block(
     :param client: HTTP client pointed at the Omnigent server.
     :param filesystem_only: Skip inline attachments after reading their metadata,
         without downloading their content.
+    :param bridge_dir: Cache filesystem files and return text references when
+        *filesystem_only* is set.
     :returns: ``(rebuilt_block, notice)`` — the block without ``file_id``,
         and source dimensions for a sibling framework block, or ``None``.
-        Returns ``None`` (not a tuple) when the fetch failed or an inline file
-        was skipped by ``filesystem_only``. When a fetch fails, callers
+        Inline files skipped by ``filesystem_only`` retain their original block.
+        Returns ``None`` (not a tuple) when the fetch failed. Callers
         keep the original block and a visible marker can surface downstream.
     """
     file_id = str(block.get("file_id"))
+    cache_key = (
+        (attachment_cache_dir(bridge_dir), session_id, file_id)
+        if filesystem_only and bridge_dir is not None
+        else None
+    )
     base = (
         f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}"
         f"/resources/files/{urllib.parse.quote(file_id, safe='')}"
@@ -768,7 +801,11 @@ async def resolve_file_id_block(
             if filesystem_only and not uses_filesystem_delivery(
                 stored_name if isinstance(stored_name, str) else None, source_metadata
             ):
-                return None
+                return dict(block), None
+            if cache_key is not None and cache_key in _FILESYSTEM_REFERENCE_CACHE:
+                reference = await asyncio.to_thread(_cached_filesystem_reference, cache_key)
+                if reference is not None:
+                    return {"type": "input_text", "text": reference}, None
             stage = "content"
             content_resp = await _read_attachment_resource(
                 client, f"{base}/content", session_id=session_id, stage=stage, timeout_s=30.0
@@ -819,6 +856,19 @@ async def resolve_file_id_block(
         notice = resize_dimensions(source_metadata)
     else:
         new_block["file_data"] = f"data:{content_type};base64,{encoded}"
+    if cache_key is not None and bridge_dir is not None:
+        path = materialize_attachment(new_block, bridge_dir)
+        if path is None:
+            reference = unresolved_attachment_marker(new_block)
+        else:
+            reference = f"[Attached: {path}]"
+            if len(_FILESYSTEM_REFERENCE_CACHE) >= 256:
+                _FILESYSTEM_REFERENCE_CACHE.pop(next(iter(_FILESYSTEM_REFERENCE_CACHE)))
+            _FILESYSTEM_REFERENCE_CACHE[cache_key] = (
+                path,
+                hashlib.sha256(content_resp.content).digest(),
+            )
+        return {"type": "input_text", "text": reference}, None
     return new_block, notice
 
 
@@ -865,10 +915,18 @@ async def resolve_session_item_file_references(
                 resolved_content.append(block)
                 continue
             result = await resolve_file_id_block(
-                block, session_id=session_id, client=client, filesystem_only=filesystem_only
+                block,
+                session_id=session_id,
+                client=client,
+                filesystem_only=filesystem_only,
+                bridge_dir=bridge_dir,
             )
             if result is None:
-                resolved_content.append(block)
+                resolved_content.append(
+                    {"type": "input_text", "text": unresolved_attachment_marker(block)}
+                    if bridge_dir is not None
+                    else block
+                )
                 continue
             new_block, notice = result
             resolved_content.append(new_block)

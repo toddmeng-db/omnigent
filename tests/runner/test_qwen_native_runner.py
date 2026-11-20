@@ -65,6 +65,20 @@ class _ItemsClient:
         self._items = items
 
     async def get(self, url: str, *, params: dict | None = None, **_k: object) -> httpx.Response:
+        if url.endswith("/video-file/content"):
+            return httpx.Response(
+                200, content=b"synthetic video", request=httpx.Request("GET", url)
+            )
+        if url.endswith("/video-file"):
+            return httpx.Response(
+                200,
+                json={
+                    "name": "clip.mp4",
+                    "content_type": "video/mp4",
+                    "metadata": {"source_metadata": {"delivery": "filesystem"}},
+                },
+                request=httpx.Request("GET", url),
+            )
         body = {"data": self._items, "has_more": False}
         return httpx.Response(
             200,
@@ -73,8 +87,9 @@ class _ItemsClient:
         )
 
 
+@pytest.mark.parametrize("with_file", [False, True])
 async def test_build_qwen_fork_recording_writes_recording(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_file: bool
 ) -> None:
     # Isolate ~/.qwen at a temp HOME so the synthesized recording lands there.
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
@@ -89,6 +104,8 @@ async def test_build_qwen_fork_recording_writes_recording(
         },
     ]
     client = _ItemsClient(items)
+    if with_file:
+        items[0]["content"].append({"type": "input_file", "file_id": "video-file"})
 
     qsid = await _build_qwen_fork_recording(
         client,  # type: ignore[arg-type]
@@ -102,6 +119,12 @@ async def test_build_qwen_fork_recording_writes_recording(
     recording = qnb.qwen_session_recording_path(qsid, workspace)
     types = [json.loads(line)["type"] for line in recording.read_text().splitlines()]
     assert types == ["user", "assistant"]
+    if with_file:
+        from omnigent.inner.native_attachments import attachment_cache_dir
+
+        attached = attachment_cache_dir(qnb.bridge_dir_for_session_id("conv_fork")) / "clip.mp4"
+        assert attached.read_bytes() == b"synthetic video"
+        assert str(attached) in recording.read_text()
 
 
 async def test_build_qwen_fork_recording_returns_none_when_no_items(

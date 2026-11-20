@@ -835,7 +835,11 @@ async def ensure_local_pi_resume_session(
     from omnigent.inner.native_attachments import resolve_session_item_file_references
 
     items = await resolve_session_item_file_references(
-        client, session_id=session_id, items=items, bridge_dir=session_dir.parent
+        client,
+        session_id=session_id,
+        items=items,
+        bridge_dir=session_dir.parent,
+        filesystem_only=True,
     )
     records = pi_session_records_from_session_items(
         items,

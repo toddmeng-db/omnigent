@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 from collections import Counter
@@ -50,6 +51,7 @@ async def test_resolve_compaction_snapshot_attachments(tmp_path: Path, text_hist
             session_id="fork-session",
             items=items,
             bridge_dir=tmp_path if text_history else None,
+            filesystem_only=text_history,
         )
 
     assert result is items
@@ -72,6 +74,37 @@ async def test_resolve_compaction_snapshot_attachments(tmp_path: Path, text_hist
     assert resolved[0]["filename"] == "bundle.zip"
     assert "file_id" not in resolved[0]
     assert resolved[1:] == blocks[1:]
+
+
+@pytest.mark.parametrize("mutation", ["read", "replace", "modify", "symlink", "chmod"])
+def test_cached_filesystem_reference_requires_unchanged_file(
+    tmp_path: Path, mutation: str
+) -> None:
+    path = tmp_path / "file.zip"
+    path.write_bytes(b"original")
+    path.chmod(0o600)
+    key = (tmp_path, "session-example", "file-example")
+    native_attachments._FILESYSTEM_REFERENCE_CACHE[key] = (
+        path,
+        hashlib.sha256(b"original").digest(),
+    )
+    if mutation == "read":
+        path.read_bytes()
+    elif mutation == "modify":
+        path.write_bytes(b"modified")
+    elif mutation == "chmod":
+        path.chmod(0o700)
+    else:
+        path.unlink()
+        if mutation == "replace":
+            path.write_bytes(b"original")
+        else:
+            target = tmp_path / "target.zip"
+            target.write_bytes(b"original")
+            path.symlink_to(target)
+    reference = native_attachments._cached_filesystem_reference(key)
+    assert reference == (f"[Attached: {path}]" if mutation in {"read", "replace"} else None)
+    native_attachments._FILESYSTEM_REFERENCE_CACHE.pop(key, None)
 
 
 @pytest.mark.asyncio

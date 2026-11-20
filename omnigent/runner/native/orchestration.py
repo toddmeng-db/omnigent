@@ -3482,7 +3482,11 @@ async def _auto_create_cursor_terminal(
             from omnigent.inner.native_attachments import resolve_session_item_file_references
 
             fork_items = await resolve_session_item_file_references(
-                server_client, session_id=session_id, items=fork_items, bridge_dir=bridge_dir
+                server_client,
+                session_id=session_id,
+                items=fork_items,
+                bridge_dir=bridge_dir,
+                filesystem_only=True,
             )
             write_fork_preamble(bridge_dir, _cursor_fork_history_preamble(fork_items))
         except Exception:  # context carry-over is best-effort
@@ -4349,7 +4353,11 @@ async def _auto_create_devin_terminal(
             from omnigent.inner.native_attachments import resolve_session_item_file_references
 
             carried_items = await resolve_session_item_file_references(
-                server_client, session_id=session_id, items=carried_items, bridge_dir=bridge_dir
+                server_client,
+                session_id=session_id,
+                items=carried_items,
+                bridge_dir=bridge_dir,
+                filesystem_only=True,
             )
             if launch_config.fork_carry_history or _devin_has_replayable_history(carried_items):
                 write_fork_preamble(bridge_dir, _cursor_fork_history_preamble(carried_items))
@@ -4569,6 +4577,7 @@ async def _build_qwen_fork_recording(
             session_id=session_id,
             items=items,
             bridge_dir=bridge_dir_for_session_id(session_id),
+            filesystem_only=True,
         )
         records = qwen_session_records_from_session_items(
             items,

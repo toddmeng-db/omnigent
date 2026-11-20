@@ -84,6 +84,9 @@ The same harness policy applies to configured formats such as MP4 videos.
 Forking retained file history additionally requires history replay support
 (Claude Code, Codex, Pi, Cursor, Qwen Code, or Devin). Other supported adapters
 can receive uploads and copied files, but cannot retain file history in forks.
+Deploy the updated runner with the server before using these newly supported
+replay targets. Older runners advertise the same generic file-delivery support
+but cannot rebuild the new targets' attachment references.
 
 | Server config key | Default | Scope |
 |-------------------|---------|-------|

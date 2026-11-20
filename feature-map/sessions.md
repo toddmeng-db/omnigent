@@ -143,6 +143,9 @@ the header menu), and each place is a separate entry point.
   unarchive, or delete them.
 - `fork`: fork the whole session or from a message; the fork keeps images and
   their files, elapsed "worked for" time, and can switch agent or host.
+  Retained binary-file history can replay into Claude Code, Codex, Pi, Cursor,
+  Qwen Code, or Devin with updated runners. Other targets require forking before
+  the file was sent; their ability to accept a new upload is separate.
   For a native target, the fork dialog also offers model, reasoning effort,
   and permission mode pickers. A long model list from several creators (Pi)
   shows creator headings; it has no search or collapsible groups.

@@ -123,6 +123,9 @@ implements them separately, so a fix for one harness does not reach the others.
   selected options and custom answers return to the running tool.
 - `resume`: resume a previous conversation from the CLI (`--resume`, or a bare
   `--resume` picker that lists only this host's sessions) or by reopening it.
+  Updated runners restore binary attachment caches for supported native
+  harnesses. Pi, Cursor, Qwen Code, and Devin rebuild file references in copied
+  history; inline images are not downloaded for their text-only rebuilds.
 - `pi-rebuilt-tool-names`: Pi forks and cold resumes keep matching tool names
   when rebuilding tool results, as required by Gemini. Results stay after their
   calls, ahead of messages sent while a tool ran. Unmatched outputs become
