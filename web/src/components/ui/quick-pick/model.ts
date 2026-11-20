@@ -30,6 +30,11 @@ export interface QuickPickItem<Value = unknown> {
   highlights?: { label?: readonly MatchRange[]; description?: readonly MatchRange[] };
   /** How this row's matched text stands out; defaults to the picker's highlight. */
   matchHighlight?: MatchHighlight;
+  /**
+   * `card`, without a query, shows the item as a card (icon, label and shortcut, then the
+   * description as a hint), two to a line when there's room; with a query it's a plain row.
+   */
+  layout?: "card";
   value: Value;
 }
 
